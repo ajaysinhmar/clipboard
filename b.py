@@ -19,7 +19,9 @@ chroma_db = Chroma(embedding_function=embedding_model, persist_directory="./chro
 # Parse Python files using AST
 def parse_python(file_path):
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-        tree = ast.parse(f.read())
+        source_code = f.read()
+        tree = ast.parse(source_code)
+
     func_defs = []
     func_calls = []
     imports = []
@@ -27,9 +29,10 @@ def parse_python(file_path):
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef):
             try:
-                func_defs.append((node.name, ast.unparse(node)))
+                func_body = ast.get_source_segment(source_code, node) or "No body found"
+                func_defs.append((node.name, func_body.strip()))
             except Exception as e:
-                print(f"Error un-parsing function {node.name}: {e}")
+                print(f"Error extracting function {node.name}: {e}")
                 func_defs.append((node.name, "No body found"))
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             func_calls.append(node.func.id)
@@ -48,12 +51,13 @@ def parse_generic(file_path, lang):
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         content = f.read()
 
-    func_body_pattern = r"(?:func|function|\bdef\b|void|\bint\b|\bString\b)\s+(\w+)\s*\(.*?\)\s*{([^}]*)}"
-    func_defs = re.findall(func_body_pattern, content)
+    # Regex to capture the entire function, including body
+    func_body_pattern = r"(?:func|function|\bdef\b|void|\bint\b|\bString\b)\s+(\w+)\s*\(.*?\)\s*{(.*?)}"
+    func_defs = re.findall(func_body_pattern, content, re.DOTALL)
     func_calls = re.findall(r"\b(\w+)\s*\(", content)
     imports = re.findall(r"(?:import|require)\s+['\"]?([\w\.\-/]+)['\"]?", content)
 
-    return [(func, body.strip()) for func, body in func_defs], func_calls, imports
+    return [(func.strip(), body.strip()) for func, body in func_defs], func_calls, imports
 
 # Unified parsing function
 def parse_file(file_path):
@@ -63,6 +67,20 @@ def parse_file(file_path):
     elif ext in [".go", ".js", ".ts", ".java"]:
         return parse_generic(file_path, ext[1:])
     return [], [], []
+
+def is_test_file(file_path):
+    # Check for common test file patterns
+    file_name = os.path.basename(file_path).lower()
+    if "test" in file_name or file_name.startswith("test_") or file_name.endswith("_test.py"):
+        return True
+
+    # Check if the file is in a test-related directory
+    test_directories = ["tests", "__tests__", "test"]
+    path_parts = [part.lower() for part in file_path.split(os.sep)]
+    if any(test_dir in path_parts for test_dir in test_directories):
+        return True
+
+    return False
 
 # Create a knowledge graph (KG) from the repositories
 def create_knowledge_graph(root_dir):
@@ -75,14 +93,18 @@ def create_knowledge_graph(root_dir):
             continue
 
         for file_path in glob.glob(os.path.join(repo_path, "**"), recursive=True):
-            if os.path.isfile(file_path) and os.path.splitext(file_path)[1] in SUPPORTED_EXTENSIONS:
+            if (
+                os.path.isfile(file_path)
+                and os.path.splitext(file_path)[1] in SUPPORTED_EXTENSIONS
+                and not is_test_file(file_path)  # Skip test files
+            ):
                 file_path = os.path.abspath(file_path)
                 func_defs, func_calls, imports = parse_file(file_path)
 
                 for func_name, func_body in func_defs:
-                    # Add function nodes
-                    G.add_node(func_name, type="function", body=func_body or "No body found", file=file_path, repo=repo_name)
-                    chunks[file_path].append({"name": func_name, "body": func_body or ""})
+                    # Ensure each function is treated as a single chunk
+                    G.add_node(func_name, type="function", body=func_body, file=file_path, repo=repo_name)
+                    chunks[file_path].append({"name": func_name, "body": func_body})
 
                 # Add function call edges
                 for call in func_calls:
