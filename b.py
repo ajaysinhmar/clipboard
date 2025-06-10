@@ -1,25 +1,20 @@
 import os
 import ast
 import networkx as nx
-import chromadb
-from chromadb.config import Settings
-from sentence_transformers import SentenceTransformer
+from langchain.vectorstores import Chroma
+from langchain.embeddings import HuggingFaceEmbeddings
 from collections import defaultdict
 import re
 import glob
-import json
 
 # Define supported file extensions
 SUPPORTED_EXTENSIONS = [".py", ".go", ".js", ".ts", ".java"]
 
-# Initialize ChromaDB client
-chroma_client = chromadb.Client(Settings(persist_directory="./chromadb", chroma_db_impl="duckdb"))
-
-# Create a Chroma collection for embeddings
-collection = chroma_client.get_or_create_collection("code_embeddings")
-
 # Load embedding model
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+# Initialize Chroma with LangChain's interface
+chroma_db = Chroma(embedding_function=embedding_model, persist_directory="./chromadb")
 
 # Parse Python files using AST
 def parse_python(file_path):
@@ -31,7 +26,11 @@ def parse_python(file_path):
 
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef):
-            func_defs.append((node.name, ast.unparse(node)))
+            try:
+                func_defs.append((node.name, ast.unparse(node)))
+            except Exception as e:
+                print(f"Error un-parsing function {node.name}: {e}")
+                func_defs.append((node.name, "No body found"))
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             func_calls.append(node.func.id)
         elif isinstance(node, ast.Import):
@@ -49,11 +48,12 @@ def parse_generic(file_path, lang):
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         content = f.read()
 
-    func_defs = re.findall(r"(?:func|function|\bdef\b|void|\bint\b|\bString\b)\s+(\w+)\s*\(.*?\).*?{", content)
+    func_body_pattern = r"(?:func|function|\bdef\b|void|\bint\b|\bString\b)\s+(\w+)\s*\(.*?\)\s*{([^}]*)}"
+    func_defs = re.findall(func_body_pattern, content)
     func_calls = re.findall(r"\b(\w+)\s*\(", content)
-    imports = re.findall(r"(?:import|require)\s+["']?([\w\.\-/]+)["']?", content)
+    imports = re.findall(r"(?:import|require)\s+['\"]?([\w\.\-/]+)['\"]?", content)
 
-    return [(func, None) for func in func_defs], func_calls, imports
+    return [(func, body.strip()) for func, body in func_defs], func_calls, imports
 
 # Unified parsing function
 def parse_file(file_path):
@@ -75,14 +75,14 @@ def create_knowledge_graph(root_dir):
             continue
 
         for file_path in glob.glob(os.path.join(repo_path, "**"), recursive=True):
-            if os.path.splitext(file_path)[1] in SUPPORTED_EXTENSIONS:
+            if os.path.isfile(file_path) and os.path.splitext(file_path)[1] in SUPPORTED_EXTENSIONS:
                 file_path = os.path.abspath(file_path)
                 func_defs, func_calls, imports = parse_file(file_path)
 
                 for func_name, func_body in func_defs:
                     # Add function nodes
-                    G.add_node(func_name, type="function", body=func_body, file=file_path, repo=repo_name)
-                    chunks[file_path].append({"name": func_name, "body": func_body})
+                    G.add_node(func_name, type="function", body=func_body or "No body found", file=file_path, repo=repo_name)
+                    chunks[file_path].append({"name": func_name, "body": func_body or ""})
 
                 # Add function call edges
                 for call in func_calls:
@@ -96,6 +96,7 @@ def create_knowledge_graph(root_dir):
                         G.add_edge(imp, func_name, relation="imports")
 
     return G, chunks
+
 
 # Generate enriched embeddings
 def generate_enriched_chunks(graph, chunks):
@@ -132,18 +133,16 @@ def generate_enriched_chunks(graph, chunks):
 
     return enriched_chunks
 
-# Generate embeddings and store them in ChromaDB
+# Store embeddings in ChromaDB
 def store_embeddings_in_chromadb(enriched_chunks):
     for chunk in enriched_chunks:
         text = chunk["text"]
         metadata = chunk["metadata"]
-        embedding = embedding_model.encode(text, convert_to_tensor=False)
 
         # Add to ChromaDB
-        collection.add(
-            embeddings=[embedding.tolist()],
-            metadatas=[metadata],
-            documents=[text]
+        chroma_db.add_texts(
+            texts=[text],
+            metadatas=[metadata]
         )
 
 # Main workflow
