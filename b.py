@@ -1,7 +1,7 @@
 import os
 import ast
 import networkx as nx
-from langchain.vectorstores import Chroma
+from langchain_community.vectorstores import Chroma
 from langchain.embeddings import HuggingFaceEmbeddings
 from collections import defaultdict
 import re
@@ -167,15 +167,15 @@ def store_embeddings_in_chromadb(enriched_chunks):
 
 # Main workflow
 if __name__ == "__main__":
-    ROOT_DIR = "/path/to/cloned/repos"  # Change to actual root directory
+    ROOT_DIR = "./repos"  # Change to actual root directory
 
     print("Creating Knowledge Graph...")
     knowledge_graph, function_chunks = create_knowledge_graph(ROOT_DIR)
 
     print("Generating Enriched Chunks...")
     enriched_chunks = generate_enriched_chunks(knowledge_graph, function_chunks)
-
+    # print(enriched_chunks)
     print("Storing Embeddings in ChromaDB...")
     store_embeddings_in_chromadb(enriched_chunks)
-
+    
     print("Process Completed. Embeddings and metadata stored in ChromaDB.")
