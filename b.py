@@ -43,18 +43,69 @@ def parse_python(file_path):
 
     return func_defs, func_calls, imports
 
-# Parse other languages (Go, JS, TS, Java) using regex
+# Parse other languages (Go, JS, TS, Java) using regex and brace matching
 def parse_generic(file_path, lang):
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         content = f.read()
 
-    # Regex to capture the entire function, including body
-    func_body_pattern = r"(?:func|function|\bdef\b|void|\bint\b|\bString\b)\s+(\w+)\s*\(.*?\)\s*{(.*?)}"
-    func_defs = re.findall(func_body_pattern, content, re.DOTALL)
+    func_defs = []
+    func_calls = []
+    imports = []
+
+    # Regex to capture function headers
+    header_pattern = r"(?:func|function|\bdef\b|void|\bint\b|\bString\b)\s+(\w+)\s*\(.*?\)\s*{"
+    matches = re.finditer(header_pattern, content)
+
+    for match in matches:
+        func_name = match.group(1)
+        start_index = match.start()
+        func_body = extract_function_body(content, start_index)
+        if func_body:
+            func_defs.append((func_name, func_body))
+
+    # Regex for function calls
     func_calls = re.findall(r"\b(\w+)\s*\(", content)
+
+    # Regex for imports
     imports = re.findall(r"(?:import|require)\s+['\"]?([\w\.\-/]+)['\"]?", content)
 
-    return [(func.strip(), body.strip()) for func, body in func_defs], func_calls, imports
+    return func_defs, func_calls, imports
+
+# Helper function to extract full function body with nested braces
+def extract_function_body(content, start_index):
+    stack = []
+    body = []
+    in_string = False  # Track string literals to avoid confusion with braces
+
+    for i, char in enumerate(content[start_index:], start=start_index):
+        body.append(char)
+
+        # Handle string literals
+        if char in ['"', "'"]:
+            if not stack or stack[-1] != char:
+                in_string = True
+                stack.append(char)
+            elif stack[-1] == char:
+                in_string = False
+                stack.pop()
+            continue
+
+        # Skip processing inside string literals
+        if in_string:
+            continue
+
+        # Handle opening and closing braces
+        if char == '{':
+            stack.append(char)
+        elif char == '}':
+            if stack and stack[-1] == '{':
+                stack.pop()
+
+        # If stack is empty, function body is complete
+        if not stack:
+            return ''.join(body)
+
+    return None  # Incomplete function body
 
 # Unified parsing function
 def parse_file(file_path):
