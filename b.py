@@ -327,3 +327,16 @@ if __name__ == "__main__":
     # store_embeddings_in_chromadb(enriched_chunks)
     
     print("Process Completed. Embeddings and metadata stored in ChromaDB.")
+
+
+
+
+
+
+
+
+
+
+
+
+
