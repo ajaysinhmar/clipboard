@@ -43,69 +43,166 @@ def parse_python(file_path):
 
     return func_defs, func_calls, imports
 
-# Parse other languages (Go, JS, TS, Java) using regex and brace matching
+# Parse other languages (Go, JS, TS, Java) using custom logic
 def parse_generic(file_path, lang):
+    def extract_java_methods(source):
+        i, n = 0, len(source)
+        methods = []
+        while i < n:
+            if source[i].isspace():
+                i += 1
+                continue
+            if source.startswith("//", i):
+                i = source.find("\n", i)
+                if i == -1:
+                    break
+                continue
+            if source.startswith("/*", i):
+                end = source.find("*/", i+2)
+                if end == -1:
+                    break
+                i = end + 2
+                continue
+            if source[i] == '"' or source[i] == "'":
+                quote = source[i]
+                i += 1
+                while i < n:
+                    if source[i] == "\\":
+                        i += 2
+                        continue
+                    if source[i] == quote:
+                        i += 1
+                        break
+                    i += 1
+                continue
+            if source[i] == '(':
+                depth = 1
+                j = i + 1
+                while j < n and depth > 0:
+                    if source.startswith("//", j):
+                        j = source.find("\n", j)
+                        if j == -1: break
+                        continue
+                    if source.startswith("/*", j):
+                        end = source.find("*/", j+2)
+                        if end == -1: break
+                        j = end + 2
+                        continue
+                    if source[j] == '"' or source[j] == "'":
+                        quote = source[j]
+                        j += 1
+                        while j < n:
+                            if source[j] == "\\":
+                                j += 2
+                                continue
+                            if source[j] == quote:
+                                j += 1
+                                break
+                            j += 1
+                        continue
+                    if source[j] == '(':
+                        depth += 1
+                    elif source[j] == ')':
+                        depth -= 1
+                    j += 1
+                if depth > 0:
+                    break
+
+                k = j
+                while k < n:
+                    if source[k].isspace():
+                        k += 1
+                        continue
+                    if source.startswith("//", k):
+                        k = source.find("\n", k)
+                        if k == -1: break
+                        continue
+                    if source.startswith("/*", k):
+                        end = source.find("*/", k+2)
+                        if end == -1: break
+                        k = end + 2
+                        continue
+                    if source.startswith("throws", k):
+                        k += len("throws")
+                        while k < n and (source[k].isspace() or source[k].isalpha() or source[k] in "._$,"):
+                            k += 1
+                        continue
+                    break
+
+                if k < n and source[k] == '{':
+                    prev = i - 1
+                    while prev >= 0 and source[prev].isspace():
+                        prev -= 1
+                    if prev >= 0 and source[prev] == '>':
+                        depth2 = 0
+                        while prev >= 0:
+                            if source[prev] == '>':
+                                depth2 += 1
+                            elif source[prev] == '<':
+                                depth2 -= 1
+                                if depth2 == 0:
+                                    prev -= 1
+                                    break
+                            prev -= 1
+                    while prev >= 0 and source[prev].isspace():
+                        prev -= 1
+                    end_token = prev
+                    while prev >= 0 and (source[prev].isalnum() or source[prev] in "_$"):
+                        prev -= 1
+                    token = source[prev+1:end_token+1]
+                    if token not in ("if","for","while","switch","catch","synchronized",
+                                     "try","do","else","case","finally","new"):
+                        start_body = k
+                        depth_brace = 1
+                        m = k + 1
+                        while m < n and depth_brace > 0:
+                            if source.startswith("//", m):
+                                m = source.find("\n", m)
+                                if m == -1: break
+                                continue
+                            if source.startswith("/*", m):
+                                end = source.find("*/", m+2)
+                                if end == -1: break
+                                m = end + 2
+                                continue
+                            if source[m] == '"' or source[m] == "'":
+                                quote = source[m]
+                                m += 1
+                                while m < n:
+                                    if source[m] == "\\":
+                                        m += 2
+                                        continue
+                                    if source[m] == quote:
+                                        m += 1
+                                        break
+                                    m += 1
+                                continue
+                            if source[m] == '{':
+                                depth_brace += 1
+                            elif source[m] == '}':
+                                depth_brace -= 1
+                            m += 1
+                        if depth_brace == 0:
+                            methods.append(source[start_body:m])
+                            i = m
+                            continue
+            i += 1
+        return methods
+
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         content = f.read()
 
-    func_defs = []
-    func_calls = []
-    imports = []
+    if lang == "java":
+        func_defs = extract_java_methods(content)
+        func_calls = re.findall(r"\b(\w+)\s*\(", content)
+        imports = re.findall(r"(?:import|require)\s+([\w\.\-/]+);", content)
+        return [(func, func) for func in func_defs], func_calls, imports
 
-    # Regex to capture function headers
-    header_pattern = r"(?:func|function|\bdef\b|void|\bint\b|\bString\b)\s+(\w+)\s*\(.*?\)\s*{"
-    matches = re.finditer(header_pattern, content)
-
-    for match in matches:
-        func_name = match.group(1)
-        start_index = match.start()
-        func_body = extract_function_body(content, start_index)
-        if func_body:
-            func_defs.append((func_name, func_body))
-
-    # Regex for function calls
+    func_defs = re.findall(r"(?:func|function|\bdef\b|void|\bint\b|\bString\b)\s+(\w+)\s*\(.*?\).*?{", content)
     func_calls = re.findall(r"\b(\w+)\s*\(", content)
+    imports = re.findall(r"(?:import|require)\s+[\"']?([\w\.\-/]+)[\"']?", content)
 
-    # Regex for imports
-    imports = re.findall(r"(?:import|require)\s+['\"]?([\w\.\-/]+)['\"]?", content)
-
-    return func_defs, func_calls, imports
-
-# Helper function to extract full function body with nested braces
-def extract_function_body(content, start_index):
-    stack = []
-    body = []
-    in_string = False  # Track string literals to avoid confusion with braces
-
-    for i, char in enumerate(content[start_index:], start=start_index):
-        body.append(char)
-
-        # Handle string literals
-        if char in ['"', "'"]:
-            if not stack or stack[-1] != char:
-                in_string = True
-                stack.append(char)
-            elif stack[-1] == char:
-                in_string = False
-                stack.pop()
-            continue
-
-        # Skip processing inside string literals
-        if in_string:
-            continue
-
-        # Handle opening and closing braces
-        if char == '{':
-            stack.append(char)
-        elif char == '}':
-            if stack and stack[-1] == '{':
-                stack.pop()
-
-        # If stack is empty, function body is complete
-        if not stack:
-            return ''.join(body)
-
-    return None  # Incomplete function body
+    return [(func, None) for func in func_defs], func_calls, imports
 
 # Unified parsing function
 def parse_file(file_path):
@@ -225,8 +322,8 @@ if __name__ == "__main__":
 
     print("Generating Enriched Chunks...")
     enriched_chunks = generate_enriched_chunks(knowledge_graph, function_chunks)
-    # print(enriched_chunks)
-    print("Storing Embeddings in ChromaDB...")
-    store_embeddings_in_chromadb(enriched_chunks)
+    print(enriched_chunks)
+    # print("Storing Embeddings in ChromaDB...")
+    # store_embeddings_in_chromadb(enriched_chunks)
     
     print("Process Completed. Embeddings and metadata stored in ChromaDB.")
