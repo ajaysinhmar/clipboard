@@ -28,12 +28,9 @@ def parse_python(file_path):
 
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef):
-            try:
-                func_body = ast.get_source_segment(source_code, node) or "No body found"
-                func_defs.append((node.name, func_body.strip()))
-            except Exception as e:
-                print(f"Error extracting function {node.name}: {e}")
-                func_defs.append((node.name, "No body found"))
+            # Extract function body using ast.get_source_segment
+            func_body = ast.get_source_segment(source_code, node) or "No body found"
+            func_defs.append((node.name, func_body.strip()))
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             func_calls.append(node.func.id)
         elif isinstance(node, ast.Import):
@@ -102,22 +99,23 @@ def create_knowledge_graph(root_dir):
                 func_defs, func_calls, imports = parse_file(file_path)
 
                 for func_name, func_body in func_defs:
-                    # Ensure each function is treated as a single chunk
+                    # Add function nodes with full body
                     G.add_node(func_name, type="function", body=func_body, file=file_path, repo=repo_name)
                     chunks[file_path].append({"name": func_name, "body": func_body})
 
-                # Add function call edges
                 for call in func_calls:
-                    if call in G.nodes:
-                        G.add_edge(func_name, call, relation="calls")
+                    for func_name, _ in func_defs:
+                        if func_name in G.nodes:
+                            G.add_edge(func_name, call, relation="calls")
 
-                # Add imports as nodes and edges
                 for imp in imports:
                     G.add_node(imp, type="import", file=file_path, repo=repo_name)
                     for func_name, _ in func_defs:
-                        G.add_edge(imp, func_name, relation="imports")
+                        if func_name in G.nodes:
+                            G.add_edge(imp, func_name, relation="imports")
 
     return G, chunks
+
 
 
 # Generate enriched embeddings
