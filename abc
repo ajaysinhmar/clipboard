@@ -1,0 +1,18 @@
+It focuses on two primary functionalities:
+	1.	Component Identification & Paging
+	•	The assistant leverages CloudWatch or Splunk logs to identify error spikes and anomalies.
+	•	It considers user-provided incident impact summaries, affected users, error messages, and affected pages.
+	•	Key steps include:
+	1.	Calculating average hourly error counts over the previous 2 days
+	2.	Identifying and quantifying the error spike percentage from the last 24 hours.
+	3.	Ranking components by error percentage and spike magnitude, isolating the top three with anomaly patterns.
+	4.	Feeding error logs and GitHub differences to an LLM for refined analysis.
+	•	The output pinpoints the responsible Component/ASV, along with:
+	•	Associated team, Latest version deployed, Explanation of the reasoning behind the recommendation.
+
+
+
+Root Cause Analysis (RCA) & Solutioning
+	•	A vector database stores optimized code chunks, leveraging ASTs (Abstract Syntax Trees) and Knowledge Graphs to map dependencies. This approach is proven to be 30-40% more effective for code bases. The database is updated dynamically through Lambda functions triggered by deployment streams, using GitHub APIs to refresh relevant changes in codebase.
+	•	Now that we know which component to look into, we would get relevant codebase chunks
+	•	Combined with error logs and recent GitHub differences, the LLM provides RCA insights and suggests fixes.
